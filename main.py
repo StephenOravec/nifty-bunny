@@ -149,7 +149,7 @@ async def chat_with_gemini(session_id: str, user_message: str) -> str:
         contents.append(
             types.Content(
                 role=role,
-                parts=[types.Part.from_text(msg["text"])]
+                parts=[types.Part(text=msg["text"])]
             )
         )
     
@@ -157,7 +157,7 @@ async def chat_with_gemini(session_id: str, user_message: str) -> str:
     contents.append(
         types.Content(
             role="user",
-            parts=[types.Part.from_text(user_message)]
+            parts=[types.Part(text=user_message)]
         )
     )
     
