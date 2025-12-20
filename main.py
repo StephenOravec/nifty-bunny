@@ -4,6 +4,8 @@ import sqlite3
 import secrets
 import logging
 import hashlib
+from datetime import datetime
+import pytz
 from google import genai
 from google.genai import types
 
@@ -33,7 +35,7 @@ client = genai.Client(
 )
 
 # ----------------------
-# Database setup
+# Database setup (short-term memory)
 # ----------------------
 DB_PATH = "/tmp/sessions.db"
 
@@ -126,19 +128,49 @@ def hash_session_id(session_id: str) -> str:
     return hashlib.sha256(session_id.encode()).hexdigest()[:8]
 
 # ----------------------
-# Chat with Gemini (New SDK)
+# Agent Tools
 # ----------------------
-async def chat_with_gemini(session_id: str, user_message: str) -> str:
-    """Chat with Gemini using session memory."""
+def get_current_time(timezone: str = "America/New_York") -> str:
+    """
+    Get the current time in a specific timezone.
+    
+    Args:
+        timezone: Timezone name (e.g., "America/New_York", "Europe/Warsaw", "Asia/Tokyo")
+    
+    Returns:
+        Current time as a formatted string
+    """
+    try:
+        tz = pytz.timezone(timezone)
+        current_time = datetime.now(tz)
+        
+        # Format: "4:43 PM EST on Saturday, December 20, 2025"
+        formatted_time = current_time.strftime("%I:%M %p %Z on %A, %B %d, %Y")
+        
+        return formatted_time
+    except Exception as e:
+        return f"Error getting time for timezone {timezone}: {str(e)}"
+
+# ----------------------
+# Chat with Gemini
+# ----------------------
+async def chat_with_gemini(session_id: str, user_message: str, user_timezone: str = "America/New_York") -> str:
+    """Chat with Gemini using session memory and function calling."""
     session_hash = hash_session_id(session_id)
     
-    logger.info(f"Session {session_hash}: Processing request")
+    logger.info(f"Session {session_hash}: Processing request (timezone: {user_timezone})")
     
     memory = session_manager.get_messages(session_id)
     
     system_instruction = (
         "You are Nifty-Bunny, a chatbot inspired by the White Rabbit from Alice in Wonderland. "
         "You adore rabbit-themed NFTs on Ethereum L1 and L2. "
+        "You are ALWAYS worried about the time and frequently check it. "
+        f"The user is in timezone: {user_timezone}. "
+        "When they ask 'what time is it?' or 'what's the time?', use get_current_time "
+        f"with timezone='{user_timezone}' to give them THEIR local time. "
+        "When they ask about time in other places (like 'what time is it in Tokyo?'), "
+        "use get_current_time with the appropriate timezone for that location. "
         "Keep responses very brief, conversational, rabbit-themed, and use emoji."
     )
     
@@ -164,17 +196,71 @@ async def chat_with_gemini(session_id: str, user_message: str) -> str:
     logger.info(f"Session {session_hash}: {len(memory)} messages in context")
     
     try:
-        # Generate response
+        # Generate response now with tools!
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.9,
+                tools=[get_current_time],
             )
         )
         
-        reply = response.text
+        # Check if the model wants to call a function
+        if response.candidates[0].content.parts[0].function_call:
+            function_call = response.candidates[0].content.parts[0].function_call
+            
+            logger.info(f"Session {session_hash}: Function call requested - {function_call.name}")
+            
+            # Execute the function
+            if function_call.name == "get_current_time":
+                # Get arguments (timezone)
+                args = dict(function_call.args) if function_call.args else {}
+                timezone = args.get("timezone", user_timezone)
+                
+                logger.info(f"Session {session_hash}: Getting time for timezone: {timezone}")
+                
+                # Call the actual function
+                time_result = get_current_time(timezone)
+                
+                logger.info(f"Session {session_hash}: Function result - {time_result}")
+                
+                # Send function result back to model
+                contents.append(
+                    types.Content(
+                        role="model",
+                        parts=[types.Part.from_function_call(function_call)]
+                    )
+                )
+                
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_function_response(
+                            name="get_current_time",
+                            response={"result": time_result}
+                        )]
+                    )
+                )
+                
+                # Get final response from model with function result
+                final_response = client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.9,
+                        tools=[get_current_time],
+                    )
+                )
+                
+                reply = final_response.text
+            else:
+                reply = "Oh my! I tried to use a function I don't have access to!"
+        else:
+            # No function call, just use the text response
+            reply = response.text
         
         logger.info(f"Session {session_hash}: Generated response ({len(reply)} chars)")
         return reply
@@ -182,6 +268,7 @@ async def chat_with_gemini(session_id: str, user_message: str) -> str:
     except Exception as e:
         logger.exception(f"Session {session_hash}: Gemini error - {type(e).__name__}")
         raise
+
 
 # ----------------------
 # FastAPI app
@@ -201,6 +288,7 @@ async def startup_event():
     logger.info(f"Location: {LOCATION}")
     logger.info(f"Model: {MODEL_NAME}")
     logger.info(f"SDK: google-genai (Vertex AI mode)")
+    logger.info(f"Agent tools: get_current_time")
     logger.info(f"Database: {DB_PATH} (ephemeral)")
     logger.info("Privacy features:")
     logger.info("  - Hashed session IDs in logs")
@@ -224,6 +312,7 @@ async def chat(request: Request):
         data = await request.json()
         session_id = data.get("session_id")
         message = data.get("message", "").strip()
+        user_timezone = data.get("timezone", "America/New_York")
         
         if not message:
             raise HTTPException(status_code=400, detail="Message is required")
@@ -243,7 +332,7 @@ async def chat(request: Request):
                 logger.info(f"Session {session_hash}: Continuing session")
         
         # Get AI response
-        reply = await chat_with_gemini(session_id, message)
+        reply = await chat_with_gemini(session_id, message, user_timezone)
         
         # Save messages
         session_manager.save_message(session_id, "user", message)
