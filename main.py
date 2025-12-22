@@ -360,3 +360,32 @@ async def chat(request: Request):
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/debug/messages/{session_id}")
+async def debug_messages(session_id: str):
+    """Debug endpoint to see what's in the database."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT role, content, timestamp 
+           FROM messages 
+           WHERE session_id = ? 
+           ORDER BY timestamp""",
+        (session_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return {
+        "session_id": session_id,
+        "message_count": len(rows),
+        "messages": [
+            {
+                "role": row[0],
+                "content": row[1],
+                "timestamp": row[2]
+            }
+            for row in rows
+        ]
+    }
