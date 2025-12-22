@@ -106,17 +106,20 @@ class SessionManager:
         conn.close()
     
     @staticmethod
-    def get_messages(session_id: str) -> list:
-        """Get all messages for a session."""
+    def get_messages(session_id: str, limit: int = 20) -> list:
+        """Get recent messages for a session."""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp",
-            (session_id,)
+            """SELECT role, content FROM messages
+               WHERE session_id = ?
+               ORDER BY timestamp DESC
+               LIMIT ?""",
+            (session_id, limit)
         )
         rows = cursor.fetchall()
         conn.close()
-        return [{"role": row[0], "text": row[1]} for row in rows]
+        return [{"role": row[0], "text": row[1]} for row in reversed(rows)]
 
 session_manager = SessionManager()
 
@@ -160,7 +163,7 @@ async def chat_with_gemini(session_id: str, user_message: str, user_timezone: st
     
     logger.info(f"Session {session_hash}: Processing request (timezone: {user_timezone})")
     
-    memory = session_manager.get_messages(session_id)
+    memory = session_manager.get_messages(session_id, limit=20)
     
     system_instruction = (
         "You are Nifty-Bunny, a chatbot inspired by the White Rabbit from Alice in Wonderland. "
