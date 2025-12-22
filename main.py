@@ -168,6 +168,11 @@ async def chat_with_gemini(session_id: str, user_message: str, user_timezone: st
     logger.info(f"Session {session_hash}: Processing request (timezone: {user_timezone})")
     
     memory = session_manager.get_messages(session_id, limit=20)
+
+    # TEMP DEBUG: Log what messages are loaded from database
+    logger.info(f"Session {session_hash}: Loaded messages from DB:")
+    for i, msg in enumerate(memory):
+        logger.info(f"  [{i}] {msg['role']}: {msg['text'][:100]}...")
     
     system_instruction = (
         "You are Nifty-Bunny, a chatbot inspired by the White Rabbit from Alice in Wonderland. "
