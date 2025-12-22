@@ -96,6 +96,10 @@ class SessionManager:
     @staticmethod
     def save_message(session_id: str, role: str, content: str):
         """Save a message to the database."""
+        # TEMP DEBUG: Log what's being saved (first 150 chars)
+        session_hash = hashlib.sha256(session_id.encode()).hexdigest()[:8]
+        logger.info(f"Session {session_hash}: Saving {role} message: {content[:150]}...")
+    
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
