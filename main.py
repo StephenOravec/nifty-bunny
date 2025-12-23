@@ -117,7 +117,7 @@ class SessionManager:
         cursor.execute(
             """SELECT role, content FROM messages
                WHERE session_id = ?
-               ORDER BY timestamp DESC
+               ORDER BY id DESC
                LIMIT ?""",
             (session_id, limit)
         )
