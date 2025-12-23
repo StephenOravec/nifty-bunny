@@ -96,10 +96,6 @@ class SessionManager:
     @staticmethod
     def save_message(session_id: str, role: str, content: str):
         """Save a message to the database."""
-        # TEMP DEBUG: Log what's being saved (first 150 chars)
-        session_hash = hashlib.sha256(session_id.encode()).hexdigest()[:8]
-        logger.info(f"Session {session_hash}: Saving {role} message: {content[:150]}...")
-    
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
@@ -168,11 +164,6 @@ async def chat_with_gemini(session_id: str, user_message: str, user_timezone: st
     logger.info(f"Session {session_hash}: Processing request (timezone: {user_timezone})")
     
     memory = session_manager.get_messages(session_id, limit=20)
-
-    # TEMP DEBUG: Log what messages are loaded from database
-    logger.info(f"Session {session_hash}: Loaded messages from DB:")
-    for i, msg in enumerate(memory):
-        logger.info(f"  [{i}] {msg['role']}: {msg['text'][:100]}...")
     
     system_instruction = (
         "You are Nifty-Bunny, a chatbot inspired by the White Rabbit from Alice in Wonderland. "
@@ -369,32 +360,3 @@ async def chat(request: Request):
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
-
-
-@app.get("/debug/messages/{session_id}")
-async def debug_messages(session_id: str):
-    """Debug endpoint to see what's in the database."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """SELECT role, content, timestamp 
-           FROM messages 
-           WHERE session_id = ? 
-           ORDER BY timestamp""",
-        (session_id,)
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return {
-        "session_id": session_id,
-        "message_count": len(rows),
-        "messages": [
-            {
-                "role": row[0],
-                "content": row[1],
-                "timestamp": row[2]
-            }
-            for row in rows
-        ]
-    }
