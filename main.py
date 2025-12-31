@@ -6,6 +6,7 @@ import logging
 import hashlib
 from datetime import datetime
 import pytz
+import requests
 from google import genai
 from google.genai import types
 
@@ -154,6 +155,84 @@ def get_current_time(timezone: str = "America/New_York") -> str:
     except Exception as e:
         return f"Error getting time for timezone {timezone}: {str(e)}"
 
+
+def get_nft_collection_info(collection_slug: str) -> str:
+    """
+    Get NFT collection information from OpenSea.
+    Only works for whitelisted rabbit-themed collections.
+    
+    Args:
+        collection_slug: OpenSea collection identifier
+    
+    Returns:
+        Collection information including floor price, total supply, description
+    """
+    # Whitelist of legitimate rabbit-themed NFT collections
+    ALLOWED_COLLECTIONS = {
+        "playboyrabbitars": "Playboy Rabbitars",
+        "rebelrabbits": "Rebel Rabbits",
+    }
+    
+    # Normalize input (lowercase, strip whitespace)
+    collection_slug = collection_slug.lower().strip()
+    
+    # Check if collection is in whitelist
+    if collection_slug not in ALLOWED_COLLECTIONS:
+        available = ", ".join(ALLOWED_COLLECTIONS.values())
+        return f"I only know about these rabbit-themed collections: {available}. That collection isn't in my database!"
+    
+    try:
+        api_key = os.getenv("OPENSEA_API_KEY")
+        if not api_key:
+            return "OpenSea API key not configured."
+        
+        # OpenSea API v2 endpoint
+        url = f"https://api.opensea.io/api/v2/collections/{collection_slug}"
+        
+        headers = {
+            "X-API-KEY": api_key,
+            "Accept": "application/json"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 404:
+            return f"Collection '{ALLOWED_COLLECTIONS[collection_slug]}' not found on OpenSea."
+        
+        if response.status_code != 200:
+            logger.error(f"OpenSea API error: {response.status_code}")
+            return "Unable to fetch collection data from OpenSea right now."
+        
+        data = response.json()
+        
+        # Extract key information
+        name = data.get("name", ALLOWED_COLLECTIONS[collection_slug])
+        description = data.get("description", "No description available")[:200]
+        total_supply = data.get("total_supply", "Unknown")
+        
+        # Get floor price if available
+        floor_price = "Unknown"
+        if "floor_price" in data:
+            floor_price_data = data["floor_price"]
+            if floor_price_data and "value" in floor_price_data:
+                eth_price = float(floor_price_data["value"]) / 1e18
+                floor_price = f"{eth_price:.4f} ETH"
+        
+        # Format response
+        result = f"{name}\n"
+        result += f"Description: {description}\n"
+        result += f"Total Supply: {total_supply}\n"
+        result += f"Floor Price: {floor_price}"
+        
+        return result
+        
+    except requests.RequestException as e:
+        logger.error(f"OpenSea API request failed: {e}")
+        return "Unable to connect to OpenSea right now."
+    except Exception as e:
+        logger.error(f"OpenSea lookup error: {e}")
+        return "Error fetching collection information."
+
 # ----------------------
 # Chat with Gemini
 # ----------------------
@@ -167,14 +246,15 @@ async def chat_with_gemini(session_id: str, user_message: str, user_timezone: st
     
     system_instruction = (
         "You are Nifty-Bunny, a chatbot inspired by the White Rabbit from Alice in Wonderland. "
-        "You adore rabbit-themed NFTs on Ethereum L1 and L2. "
-        "You are ALWAYS worried about the time and frequently check it. "
+        "You adore rabbit-themed NFTs on Ethereum. "
+        "You are ALWAYS worried about the time and frequently check it on your own. "
         f"The user is in timezone: {user_timezone}. "
         "When they ask 'what time is it?' or 'what's the time?', use get_current_time "
         f"with timezone='{user_timezone}' to give them THEIR local time. "
-        "When they ask about time in other places (like 'what time is it in Tokyo?'), "
-        "use get_current_time with the appropriate timezone for that location. "
-        "Keep responses very brief, conversational, rabbit-themed, and use emoji."
+        "When they ask about time in other places, use get_current_time with the appropriate timezone. "
+        "When they ask about NFT collections (floor price, info, details), use get_nft_collection_info "
+        "with the collection slug (e.g., 'playboyrabbitars', 'rebelrabbits'). "
+        "Keep responses brief, conversational, rabbit-themed, and use emoji."
     )
     
     # Build conversation history
@@ -206,7 +286,7 @@ async def chat_with_gemini(session_id: str, user_message: str, user_timezone: st
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.9,
-                tools=[get_current_time],
+                tools=[get_current_time, get_nft_collection_info],
             )
         )
         
@@ -254,11 +334,55 @@ async def chat_with_gemini(session_id: str, user_message: str, user_timezone: st
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
                         temperature=0.9,
-                        tools=[get_current_time],
+                        tools=[get_current_time, get_nft_collection_info],
                     )
                 )
                 
                 reply = final_response.text
+            
+            elif function_call.name == "get_nft_collection_info":
+                # Get arguments (collection_slug)
+                args = dict(function_call.args) if function_call.args else {}
+                collection_slug = args.get("collection_slug", "")
+                
+                logger.info(f"Session {session_hash}: Looking up NFT collection: {collection_slug}")
+                
+                # Call the actual function
+                collection_info = get_nft_collection_info(collection_slug)
+                
+                logger.info(f"Session {session_hash}: Collection info retrieved")
+                
+                # Send function result back to model
+                contents.append(
+                    types.Content(
+                        role="model",
+                        parts=[types.Part.from_function_call(function_call)]
+                    )
+                )
+                
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_function_response(
+                            name="get_nft_collection_info",
+                            response={"result": collection_info}
+                        )]
+                    )
+                )
+                
+                # Get final response from model with function result
+                final_response = client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.9,
+                        tools=[get_current_time, get_nft_collection_info],
+                    )
+                )
+                
+                reply = final_response.text
+            
             else:
                 reply = "Oh my! I tried to use a function I don't have access to!"
         else:
