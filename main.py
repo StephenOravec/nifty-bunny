@@ -186,59 +186,42 @@ def get_nft_collection_info(collection_slug: str) -> str:
         if not api_key:
             return "OpenSea API key not configured."
         
-        # OpenSea API v2 endpoint
-        url = f"https://api.opensea.io/api/v2/collections/{collection_slug}"
-        
         headers = {
             "X-API-KEY": api_key,
             "Accept": "application/json"
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        # Get collection details
+        collection_url = f"https://api.opensea.io/api/v2/collections/{collection_slug}"
+        collection_response = requests.get(collection_url, headers=headers, timeout=10)
         
-        if response.status_code == 404:
+        if collection_response.status_code == 404:
             return f"Collection '{ALLOWED_COLLECTIONS[collection_slug]}' not found on OpenSea."
         
-        if response.status_code != 200:
-            logger.error(f"OpenSea API error: {response.status_code}")
+        if collection_response.status_code != 200:
+            logger.error(f"OpenSea API error: {collection_response.status_code}")
             return "Unable to fetch collection data from OpenSea right now."
         
-        data = response.json()
+        collection_data = collection_response.json()
         
-        # TEMP DEBUG: Log the raw response to see structure
-        logger.info(f"OpenSea API response keys: {data.keys()}")
-        logger.info(f"Full data: {data}")
+        # Get collection stats (includes floor price)
+        stats_url = f"https://api.opensea.io/api/v2/collections/{collection_slug}/stats"
+        stats_response = requests.get(stats_url, headers=headers, timeout=10)
         
-        # Extract key information
-        name = data.get("name", ALLOWED_COLLECTIONS[collection_slug])
-        description = data.get("description", "No description available")[:200]
-        total_supply = data.get("total_supply", "Unknown")
+        # Extract basic information
+        name = collection_data.get("name", ALLOWED_COLLECTIONS[collection_slug])
+        description = collection_data.get("description", "No description available")[:200]
+        total_supply = collection_data.get("total_supply", "Unknown")
         
-        # Get floor price - try multiple possible locations
+        # Extract floor price from stats
         floor_price = "Unknown"
-        
-        # Try different possible paths in the response
-        if "floor_price" in data and data["floor_price"]:
-            floor_data = data["floor_price"]
-            logger.info(f"floor_price data: {floor_data}")
+        if stats_response.status_code == 200:
+            stats_data = stats_response.json()
+            total_stats = stats_data.get("total", {})
             
-            # Try various possible structures
-            if isinstance(floor_data, dict):
-                if "value" in floor_data:
-                    eth_price = float(floor_data["value"]) / 1e18
-                    floor_price = f"{eth_price:.4f} ETH"
-                elif "eth" in floor_data:
-                    floor_price = f"{floor_data['eth']:.4f} ETH"
-            elif isinstance(floor_data, (int, float)):
-                eth_price = float(floor_data) / 1e18
-                floor_price = f"{eth_price:.4f} ETH"
-        
-        # Also check for stats object (common in v2)
-        if floor_price == "Unknown" and "stats" in data:
-            stats = data["stats"]
-            logger.info(f"stats data: {stats}")
-            if "floor_price" in stats:
-                floor_price = f"{stats['floor_price']:.4f} ETH"
+            # Floor price is in the total.floor_price field
+            if "floor_price" in total_stats and total_stats["floor_price"]:
+                floor_price = f"{total_stats['floor_price']:.4f} ETH"
         
         # Format response
         result = f"{name}\n"
@@ -254,7 +237,7 @@ def get_nft_collection_info(collection_slug: str) -> str:
     except Exception as e:
         logger.error(f"OpenSea lookup error: {e}")
         return "Error fetching collection information."
-
+        
 # ----------------------
 # Chat with Gemini
 # ----------------------
