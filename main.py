@@ -205,18 +205,40 @@ def get_nft_collection_info(collection_slug: str) -> str:
         
         data = response.json()
         
+        # TEMP DEBUG: Log the raw response to see structure
+        logger.info(f"OpenSea API response keys: {data.keys()}")
+        logger.info(f"Full data: {data}")
+        
         # Extract key information
         name = data.get("name", ALLOWED_COLLECTIONS[collection_slug])
         description = data.get("description", "No description available")[:200]
         total_supply = data.get("total_supply", "Unknown")
         
-        # Get floor price if available
+        # Get floor price - try multiple possible locations
         floor_price = "Unknown"
-        if "floor_price" in data:
-            floor_price_data = data["floor_price"]
-            if floor_price_data and "value" in floor_price_data:
-                eth_price = float(floor_price_data["value"]) / 1e18
+        
+        # Try different possible paths in the response
+        if "floor_price" in data and data["floor_price"]:
+            floor_data = data["floor_price"]
+            logger.info(f"floor_price data: {floor_data}")
+            
+            # Try various possible structures
+            if isinstance(floor_data, dict):
+                if "value" in floor_data:
+                    eth_price = float(floor_data["value"]) / 1e18
+                    floor_price = f"{eth_price:.4f} ETH"
+                elif "eth" in floor_data:
+                    floor_price = f"{floor_data['eth']:.4f} ETH"
+            elif isinstance(floor_data, (int, float)):
+                eth_price = float(floor_data) / 1e18
                 floor_price = f"{eth_price:.4f} ETH"
+        
+        # Also check for stats object (common in v2)
+        if floor_price == "Unknown" and "stats" in data:
+            stats = data["stats"]
+            logger.info(f"stats data: {stats}")
+            if "floor_price" in stats:
+                floor_price = f"{stats['floor_price']:.4f} ETH"
         
         # Format response
         result = f"{name}\n"
