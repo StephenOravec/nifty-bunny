@@ -438,7 +438,7 @@ async def startup_event():
     logger.info(f"Location: {LOCATION}")
     logger.info(f"Model: {MODEL_NAME}")
     logger.info(f"SDK: google-genai (Vertex AI mode)")
-    logger.info(f"Agent tools: get_current_time")
+    logger.info(f"Agent tools: get_current_time, get_nft_collection_info")
     logger.info(f"Database: {DB_PATH} (ephemeral)")
     logger.info("Privacy features:")
     logger.info("  - Hashed session IDs in logs")
