@@ -173,10 +173,10 @@ def get_nft_collection_info(collection_slug: str) -> str:
         "rebelrabbits": "Rebel Rabbits",
     }
     
-    # Normalize input (lowercase, strip whitespace)
-    collection_slug = collection_slug.lower().strip()
-    
-    logger.info(f"Looking up collection: {collection_slug}")
+    # Normalize input (lowercase, strip whitespace, remove hyphens)
+    collection_slug = collection_slug.lower().strip().replace("-", "")
+
+    logger.info(f"Looking up collection (normalized): {collection_slug}")
     
     # Check if collection is in whitelist
     if collection_slug not in ALLOWED_COLLECTIONS:
