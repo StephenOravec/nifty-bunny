@@ -176,15 +176,21 @@ def get_nft_collection_info(collection_slug: str) -> str:
     # Normalize input (lowercase, strip whitespace)
     collection_slug = collection_slug.lower().strip()
     
+    logger.info(f"Looking up collection: {collection_slug}")
+    
     # Check if collection is in whitelist
     if collection_slug not in ALLOWED_COLLECTIONS:
         available = ", ".join(ALLOWED_COLLECTIONS.values())
+        logger.warning(f"Collection {collection_slug} not in whitelist")
         return f"I only know about these rabbit-themed collections: {available}. That collection isn't in my database!"
     
     try:
         api_key = os.getenv("OPENSEA_API_KEY")
         if not api_key:
+            logger.error("OPENSEA_API_KEY not found in environment")
             return "OpenSea API key not configured."
+        
+        logger.info(f"API key found, making requests for {collection_slug}")
         
         headers = {
             "X-API-KEY": api_key,
@@ -193,20 +199,28 @@ def get_nft_collection_info(collection_slug: str) -> str:
         
         # Get collection details
         collection_url = f"https://api.opensea.io/api/v2/collections/{collection_slug}"
+        logger.info(f"Calling OpenSea: {collection_url}")
+        
         collection_response = requests.get(collection_url, headers=headers, timeout=10)
+        logger.info(f"Collection response status: {collection_response.status_code}")
         
         if collection_response.status_code == 404:
+            logger.error(f"Collection not found: {collection_slug}")
             return f"Collection '{ALLOWED_COLLECTIONS[collection_slug]}' not found on OpenSea."
         
         if collection_response.status_code != 200:
-            logger.error(f"OpenSea API error: {collection_response.status_code}")
+            logger.error(f"OpenSea API error: {collection_response.status_code} - {collection_response.text}")
             return "Unable to fetch collection data from OpenSea right now."
         
         collection_data = collection_response.json()
+        logger.info(f"Collection data retrieved successfully")
         
         # Get collection stats (includes floor price)
         stats_url = f"https://api.opensea.io/api/v2/collections/{collection_slug}/stats"
+        logger.info(f"Calling OpenSea stats: {stats_url}")
+        
         stats_response = requests.get(stats_url, headers=headers, timeout=10)
+        logger.info(f"Stats response status: {stats_response.status_code}")
         
         # Extract basic information
         name = collection_data.get("name", ALLOWED_COLLECTIONS[collection_slug])
@@ -222,6 +236,7 @@ def get_nft_collection_info(collection_slug: str) -> str:
             # Floor price is in the total.floor_price field
             if "floor_price" in total_stats and total_stats["floor_price"]:
                 floor_price = f"{total_stats['floor_price']:.4f} ETH"
+                logger.info(f"Floor price: {floor_price}")
         
         # Format response
         result = f"{name}\n"
@@ -229,13 +244,14 @@ def get_nft_collection_info(collection_slug: str) -> str:
         result += f"Total Supply: {total_supply}\n"
         result += f"Floor Price: {floor_price}"
         
+        logger.info(f"Returning collection info for {name}")
         return result
         
     except requests.RequestException as e:
-        logger.error(f"OpenSea API request failed: {e}")
+        logger.error(f"OpenSea API request failed: {e}", exc_info=True)
         return "Unable to connect to OpenSea right now."
     except Exception as e:
-        logger.error(f"OpenSea lookup error: {e}")
+        logger.error(f"OpenSea lookup error: {e}", exc_info=True)
         return "Error fetching collection information."
 
 # ----------------------
